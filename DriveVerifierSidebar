@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <style>
+      :root { font-family: Arial, sans-serif; color: #202124; }
+      body { margin: 0; padding: 16px; font-size: 13px; }
+      h1 { font-size: 19px; margin: 0 0 6px; }
+      h2 { font-size: 16px; margin: 18px 0 8px; }
+      p { line-height: 1.4; }
+      label { display: block; font-weight: 600; margin: 12px 0 5px; }
+      input[type="text"], input[type="number"], select, textarea {
+        box-sizing: border-box; width: 100%; border: 1px solid #dadce0; border-radius: 4px;
+        padding: 8px; background: #fff; color: #202124;
+      }
+      input[type="checkbox"], input[type="radio"] { margin-right: 7px; }
+      textarea { min-height: 56px; resize: vertical; }
+      .hint, .muted { color: #5f6368; font-size: 12px; line-height: 1.4; }
+      .column-list { max-height: 180px; overflow: auto; border: 1px solid #dadce0; border-radius: 4px; padding: 5px 9px; }
+      .column-option, .radio-option { display: flex; gap: 5px; align-items: flex-start; padding: 6px 0; font-weight: 400; margin: 0; }
+      .column-label { overflow-wrap: anywhere; }
+      .check-row { display: flex; gap: 7px; align-items: flex-start; margin-top: 12px; font-weight: 400; }
+      .card { border: 1px solid #dadce0; border-radius: 7px; padding: 12px; margin: 12px 0; }
+      .status { min-height: 18px; margin: 10px 0; color: #5f6368; }
+      .error { display: none; white-space: pre-wrap; color: #8b1d1d; background: #fce8e6; padding: 10px; border-radius: 5px; }
+      .summary { margin: 0; padding-left: 20px; }
+      .summary li { margin: 5px 0; }
+      .actions { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 7px; }
+      button { border: 1px solid #dadce0; border-radius: 4px; background: #fff; padding: 8px 11px; cursor: pointer; }
+      button.primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+      button:disabled { opacity: .55; cursor: default; }
+      .hidden { display: none !important; }
+      .file-title { overflow-wrap: anywhere; font-weight: 600; }
+      .file-path { color: #5f6368; font-size: 12px; overflow-wrap: anywhere; margin: 3px 0 0 22px; }
+      .progress-mark { display: inline-block; width: 10px; height: 10px; border: 2px solid #dadce0; border-top-color: #1a73e8; border-radius: 50%; animation: spin .8s linear infinite; margin-right: 7px; vertical-align: -2px; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <h1>Verificador de arquivos</h1>
+    <p class="hint">Compara valores das colunas selecionadas com os nomes dos arquivos em uma pasta do Drive e nas subpastas.</p>
+    <div id="status" class="status">Carregando as abas da planilha…</div>
+    <div id="error" class="error"></div>
+
+    <section id="setup">
+      <label for="folder">Pasta do Google Drive</label>
+      <input id="folder" type="text" placeholder="Cole o link ou o ID da pasta">
+
+      <label for="sourceSheet">Aba de origem</label>
+      <select id="sourceSheet"></select>
+
+      <label>Colunas para comparar</label>
+      <div id="columns" class="column-list"><span class="muted">Selecione uma aba.</span></div>
+
+      <label for="firstDataRow">Primeira linha de dados</label>
+      <input id="firstDataRow" type="number" min="2" value="2">
+      <div class="hint">A linha 1 é tratada como cabeçalho.</div>
+
+      <label for="matchMode">Modo de comparação</label>
+      <select id="matchMode">
+        <option value="exact">Igual ao nome extraído</option>
+        <option value="startsWith">Nome do arquivo começa com o valor</option>
+        <option value="contains">Nome do arquivo contém o valor</option>
+      </select>
+
+      <label for="fileNameRegex">Padrão opcional para extrair a chave do nome</label>
+      <input id="fileNameRegex" type="text" placeholder="Ex.: ^(.+?)_manifesto.*$">
+      <div class="hint">Use uma expressão regular JavaScript sem barras delimitadoras e coloque a chave no primeiro grupo entre parênteses. Sem padrão, o sistema compara o nome sem a extensão.</div>
+
+      <label for="extensions">Extensões de arquivo</label>
+      <input id="extensions" type="text" value="pdf" placeholder="pdf, xml, docx">
+      <div class="hint">Separe por vírgula ou ponto e vírgula. Deixe vazio para aceitar qualquer extensão.</div>
+
+      <label for="conditionColumn">Coluna condicional (opcional)</label>
+      <select id="conditionColumn"><option value="">Não aplicar condição</option></select>
+      <label for="skipValues">Ignorar quando essa coluna tiver</label>
+      <input id="skipValues" type="text" placeholder="Ex.: Cancelado; Inativo">
+      <div class="hint">Valores separados por vírgula ou ponto e vírgula. A comparação usa o mesmo ajuste de maiúsculas/minúsculas abaixo.</div>
+
+      <label class="check-row"><input id="caseSensitive" type="checkbox"><span>Diferenciar maiúsculas de minúsculas</span></label>
+
+      <div class="actions">
+        <button id="run" class="primary" type="button" onclick="runVerification()">Verificar Drive</button>
+      </div>
+    </section>
+
+    <section id="results" class="hidden">
+      <h2>Resultado</h2>
+      <div id="summary" class="card"></div>
+      <div class="actions">
+        <button id="openReport" type="button" onclick="openReport()">Abrir relatório</button>
+        <button type="button" onclick="resetPanel()">Nova verificação</button>
+      </div>
+      <div id="duplicateReview" class="hidden">
+        <h2>Revisar duplicidades</h2>
+        <div id="duplicateStep" class="card"></div>
+        <div class="actions">
+          <button id="nextDuplicate" class="primary" type="button" onclick="saveDuplicateChoice()">Salvar escolha e continuar</button>
+        </div>
+      </div>
+      <div id="duplicateDone" class="hidden card">
+        <p>Você revisou todas as duplicidades. A decisão será registrada na coluna “Tratamento da duplicidade” do relatório.</p>
+        <div class="actions"><button id="applyDuplicates" class="primary" type="button" onclick="applyDuplicateChoices()">Aplicar decisões</button></div>
+      </div>
+    </section>
+
+    <script>
+      var initialData = null;
+      var currentColumns = [];
+      var verificationResult = null;
+      var duplicateIndex = 0;
+      var currentDuplicate = null;
+      var duplicateChoices = [];
+      var busy = false;
+
+      var statusNode = document.getElementById("status");
+      var errorNode = document.getElementById("error");
+      var sourceSheetNode = document.getElementById("sourceSheet");
+      var columnsNode = document.getElementById("columns");
+      var conditionColumnNode = document.getElementById("conditionColumn");
+
+      function setStatus(message, loading) {
+        statusNode.textContent = "";
+        if (loading) {
+          var spinner = document.createElement("span");
+          spinner.className = "progress-mark";
+          statusNode.appendChild(spinner);
+        }
+        statusNode.appendChild(document.createTextNode(message));
+      }
+
+      function showError(message) {
+        errorNode.textContent = message || "Ocorreu um erro durante a verificação.";
+        errorNode.style.display = "block";
+        setStatus("Ação necessária.", false);
+      }
+
+      function clearError() {
+        errorNode.textContent = "";
+        errorNode.style.display = "none";
+      }
+
+      function setBusy(value) {
+        busy = value;
+        document.getElementById("run").disabled = value;
+        document.getElementById("sourceSheet").disabled = value;
+      }
+
+      function loadInitialData() {
+        google.script.run
+          .withSuccessHandler(function (data) {
+            initialData = data;
+            sourceSheetNode.textContent = "";
+            data.sheets.forEach(function (sheet) {
+              var option = document.createElement("option");
+              option.value = String(sheet.id);
+              option.textContent = sheet.name;
+              sourceSheetNode.appendChild(option);
+            });
+            sourceSheetNode.value = String(data.activeSheetId);
+            sourceSheetNode.addEventListener("change", loadColumns);
+            loadColumns();
+          })
+          .withFailureHandler(function (error) {
+            showError(error && error.message ? error.message : error);
+          })
+          .DV_getInitialData();
+      }
+
+      function loadColumns() {
+        clearError();
+        setStatus("Lendo os cabeçalhos da aba…", true);
+        var sheetId = Number(sourceSheetNode.value);
+        google.script.run
+          .withSuccessHandler(function (data) {
+            currentColumns = data.columns || [];
+            renderColumns();
+            setStatus(data.columns.length ? "Selecione as colunas que serão comparadas." : "A aba não tem cabeçalhos na linha 1.", false);
+          })
+          .withFailureHandler(function (error) {
+            showError(error && error.message ? error.message : error);
+          })
+          .DV_getSheetColumns(sheetId);
+      }
+
+      function renderColumns() {
+        columnsNode.textContent = "";
+        conditionColumnNode.textContent = "";
+        var none = document.createElement("option");
+        none.value = "";
+        none.textContent = "Não aplicar condição";
+        conditionColumnNode.appendChild(none);
+
+        currentColumns.forEach(function (column) {
+          var label = document.createElement("label");
+          label.className = "column-option";
+          var checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.name = "sourceColumn";
+          checkbox.value = String(column.index);
+          var text = document.createElement("span");
+          text.className = "column-label";
+          text.textContent = column.letter + " — " + column.header;
+          label.appendChild(checkbox);
+          label.appendChild(text);
+          columnsNode.appendChild(label);
+
+          var option = document.createElement("option");
+          option.value = String(column.index);
+          option.textContent = column.letter + " — " + column.header;
+          conditionColumnNode.appendChild(option);
+        });
+      }
+
+      function collectConfig() {
+        var selected = Array.prototype.slice.call(document.querySelectorAll('input[name="sourceColumn"]:checked'))
+          .map(function (checkbox) { return Number(checkbox.value); });
+        return {
+          folderReference: document.getElementById("folder").value,
+          sheetId: Number(sourceSheetNode.value),
+          sourceColumns: selected,
+          firstDataRow: Number(document.getElementById("firstDataRow").value),
+          matchMode: document.getElementById("matchMode").value,
+          fileNameRegex: document.getElementById("fileNameRegex").value,
+          extensions: document.getElementById("extensions").value,
+          conditionColumn: conditionColumnNode.value,
+          skipValues: document.getElementById("skipValues").value,
+          caseSensitive: document.getElementById("caseSensitive").checked
+        };
+      }
+
+      function runVerification() {
+        if (busy) return;
+        clearError();
+        setBusy(true);
+        setStatus("Lendo as colunas e percorrendo a pasta do Drive e suas subpastas…", true);
+        google.script.run
+          .withSuccessHandler(function (result) {
+            setBusy(false);
+            verificationResult = result;
+            duplicateIndex = 0;
+            duplicateChoices = [];
+            document.getElementById("setup").classList.add("hidden");
+            document.getElementById("results").classList.remove("hidden");
+            renderSummary(result);
+            setStatus("Relatório criado: " + result.resultSheetName, false);
+            if (result.duplicateGroups && result.duplicateGroups.length) {
+              document.getElementById("duplicateReview").classList.remove("hidden");
+              loadDuplicateDetails();
+            }
+          })
+          .withFailureHandler(function (error) {
+            setBusy(false);
+            showError(error && error.message ? error.message : error);
+          })
+          .DV_verify(collectConfig());
+      }
+
+      function renderSummary(result) {
+        var summary = result.summary;
+        var list = document.createElement("ul");
+        list.className = "summary";
+        [
+          ["Valores verificados", summary.valuesChecked],
+          ["Valores encontrados", summary.valuesFound],
+          ["Valores não encontrados", summary.valuesMissing],
+          ["Valores com duplicidade", summary.duplicateValues],
+          ["Arquivos correspondentes", summary.filesMatched],
+          ["Ignorados pela condição", summary.skippedByCondition],
+          ["Grupos de duplicidade para revisar", summary.duplicateGroups],
+          ["Linhas do relatório", summary.reportRows]
+        ].forEach(function (entry) {
+          var item = document.createElement("li");
+          item.textContent = entry[0] + ": " + entry[1];
+          list.appendChild(item);
+        });
+        var card = document.getElementById("summary");
+        card.textContent = "";
+        card.appendChild(list);
+      }
+
+      function loadDuplicateDetails() {
+        if (!verificationResult || duplicateIndex >= verificationResult.duplicateGroups.length) {
+          document.getElementById("nextDuplicate").disabled = true;
+          document.getElementById("duplicateReview").classList.add("hidden");
+          document.getElementById("duplicateDone").classList.remove("hidden");
+          setStatus("Revisão das duplicidades pronta para aplicar.", false);
+          return;
+        }
+        document.getElementById("nextDuplicate").disabled = true;
+        currentDuplicate = verificationResult.duplicateGroups[duplicateIndex];
+        setStatus("Carregando duplicidade " + (duplicateIndex + 1) + " de " + verificationResult.duplicateGroups.length + "…", true);
+        google.script.run
+          .withSuccessHandler(renderDuplicateDetails)
+          .withFailureHandler(function (error) {
+            showError(error && error.message ? error.message : error);
+          })
+          .DV_getDuplicateDetails(verificationResult.resultSheetId, currentDuplicate.id);
+      }
+
+      function renderDuplicateDetails(data) {
+        document.getElementById("nextDuplicate").disabled = false;
+        var card = document.getElementById("duplicateStep");
+        card.textContent = "";
+        var heading = document.createElement("p");
+        heading.textContent = "Duplicidade " + (duplicateIndex + 1) + " de " + verificationResult.duplicateGroups.length +
+          " — coluna " + currentDuplicate.columnHeader + "; valor “" + currentDuplicate.value + "”; encontrados " + data.files.length + " arquivos.";
+        card.appendChild(heading);
+
+        var keepLabel = document.createElement("label");
+        keepLabel.className = "radio-option";
+        var keepRadio = document.createElement("input");
+        keepRadio.type = "radio";
+        keepRadio.name = "duplicateChoice";
+        keepRadio.value = "KEEP_ALL";
+        var keepText = document.createElement("span");
+        keepText.textContent = "Manter todos como opções válidas no relatório";
+        keepLabel.appendChild(keepRadio);
+        keepLabel.appendChild(keepText);
+        card.appendChild(keepLabel);
+
+        data.files.forEach(function (file) {
+          var label = document.createElement("label");
+          label.className = "radio-option";
+          var radio = document.createElement("input");
+          radio.type = "radio";
+          radio.name = "duplicateChoice";
+          radio.value = "USE_FILE:" + file.id;
+          var textBox = document.createElement("span");
+          var title = document.createElement("span");
+          title.className = "file-title";
+          title.textContent = file.name;
+          var path = document.createElement("span");
+          path.className = "file-path";
+          path.textContent = file.path;
+          textBox.appendChild(title);
+          textBox.appendChild(path);
+          label.appendChild(radio);
+          label.appendChild(textBox);
+          card.appendChild(label);
+        });
+        setStatus("Escolha como diferenciar os arquivos duplicados.", false);
+      }
+
+      function saveDuplicateChoice() {
+        if (busy || document.getElementById("nextDuplicate").disabled) return;
+        var selected = document.querySelector('input[name="duplicateChoice"]:checked');
+        if (!selected || !currentDuplicate) {
+          showError("Escolha “Manter todos” ou selecione o arquivo que deve ser considerado.");
+          return;
+        }
+        var decision = { groupId: currentDuplicate.id, action: "KEEP_ALL" };
+        if (selected.value.indexOf("USE_FILE:") === 0) {
+          decision.action = "USE_FILE";
+          decision.fileId = selected.value.slice("USE_FILE:".length);
+        }
+        duplicateChoices.push(decision);
+        duplicateIndex++;
+        document.getElementById("nextDuplicate").disabled = true;
+        clearError();
+        loadDuplicateDetails();
+      }
+
+      function applyDuplicateChoices() {
+        if (busy) return;
+        clearError();
+        busy = true;
+        document.getElementById("applyDuplicates").disabled = true;
+        setStatus("Aplicando as escolhas no relatório…", true);
+        google.script.run
+          .withSuccessHandler(function (result) {
+            busy = false;
+            document.getElementById("applyDuplicates").disabled = false;
+            document.getElementById("duplicateDone").classList.add("hidden");
+            setStatus("Decisões aplicadas a " + result.updatedGroups + " grupo(s).", false);
+          })
+          .withFailureHandler(function (error) {
+            busy = false;
+            document.getElementById("applyDuplicates").disabled = false;
+            showError(error && error.message ? error.message : error);
+          })
+          .DV_applyDuplicateDecisions(verificationResult.resultSheetId, duplicateChoices);
+      }
+
+      function openReport() {
+        if (!verificationResult) return;
+        google.script.run
+          .withSuccessHandler(function () { setStatus("Relatório aberto na planilha.", false); })
+          .withFailureHandler(function (error) { showError(error && error.message ? error.message : error); })
+          .DV_activateResultSheet(verificationResult.resultSheetId);
+      }
+
+      function resetPanel() {
+        document.getElementById("results").classList.add("hidden");
+        document.getElementById("setup").classList.remove("hidden");
+        document.getElementById("duplicateReview").classList.add("hidden");
+        document.getElementById("duplicateDone").classList.add("hidden");
+        verificationResult = null;
+        duplicateChoices = [];
+        clearError();
+        setStatus("Configure outra verificação.", false);
+      }
+
+      loadInitialData();
+    </script>
+  </body>
+</html>
